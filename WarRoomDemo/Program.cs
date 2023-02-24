@@ -1,5 +1,7 @@
-﻿using System.Net.WebSockets;
+﻿using System;
+using System.Net.WebSockets;
 using System.Text.Json;
+using System.Threading.Tasks;
 
 namespace WarRoomDemo
 {
@@ -28,35 +30,48 @@ namespace WarRoomDemo
 
     internal class Program
     {
+        static async Task Send(ClientWebSocket webSocket, Status status)
+        {
+            var jsonOpt = new JsonSerializerOptions() { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull };
+            while (webSocket.State == WebSocketState.Open)
+            {
+                status.timestamp = DateTime.Now;
+                Console.WriteLine("sendin status...");
+                await webSocket.SendAsync(new ArraySegment<byte>(JsonSerializer.SerializeToUtf8Bytes(status, jsonOpt)), WebSocketMessageType.Text, true, CancellationToken.None);
+                Console.WriteLine("status sent");
+                await Task.Delay(1000);
+            }
+        }
+
+        static async Task Receive(ClientWebSocket webSocket)
+        {
+            byte[] buffer = new byte[1024];
+            while (webSocket.State == WebSocketState.Open)
+            {
+                await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+            }
+        }
+
         static void Main(string[] args)
         {
-            ClientWebSocket ws = new ClientWebSocket();
-            Console.WriteLine("connecting...");
-            string uri = "ws://127.0.0.1:55688/Third";
-            if (args.Length > 0)
-            {
-                uri = args[0];
-            }
-            Task task = ws.ConnectAsync(new Uri(uri), CancellationToken.None);
-            task.Wait();
-            Console.WriteLine("connected");
-
             var status = new Status();
             status.data.vehicles.Add(new Vehicle
             {
                 vehicleUid = "itri-1",
                 position = new double[] { 24.773252, 121.046107, 30 }
             });
-            while (true)
+
+            ClientWebSocket webSocket = new ClientWebSocket();
+            Console.WriteLine("connecting...");
+            string uri = "ws://127.0.0.1:55688/Third";
+            if (args.Length > 0)
             {
-                status.timestamp = DateTime.Now;
-                Console.WriteLine("sending...");
-                task=  ws.SendAsync(new ArraySegment<byte>(JsonSerializer.SerializeToUtf8Bytes(status)), WebSocketMessageType.Text, true , CancellationToken.None);
-                task.Wait();
-                Console.WriteLine("sent");
-                //Console.WriteLine(JsonSerializer.Serialize(status));
-                Thread.Sleep(1000);
+                uri = args[0];
             }
+            webSocket.ConnectAsync(new Uri(uri), CancellationToken.None).Wait();
+            Console.WriteLine("connected");
+
+            Task.WaitAll(Receive(webSocket), Send(webSocket, status));
         }
     }
 }
