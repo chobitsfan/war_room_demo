@@ -5,6 +5,12 @@ using System.Threading.Tasks;
 
 namespace WarRoomDemo
 {
+    public static class TestConstants
+    {
+        public const string SystemUid = "TestSys01";
+        public const string SystemName = "Demo DGS";
+    }
+
     public class Vehicle
     {
         public string vehicleUid { get; set; } = "";
@@ -27,7 +33,7 @@ namespace WarRoomDemo
         public string type { get; set; } = "dgsStatus";
         public class DgsStatusData
         {
-            public string systemUid { get; set; } = "";
+            public string systemUid { get; set; } = TestConstants.SystemUid;
             public int ttl { get; set; } = 1;
             public List<Vehicle>? vehicles { get; set; }
         };
@@ -43,8 +49,8 @@ namespace WarRoomDemo
         {
             public string replyContent { get; set; } = "system";
             public string replyTo { get; set; } = "";
-            public string dgsId { get; set; } = "910228";
-            public string name { get; set; } = "demo dgs";
+            public string systemUid { get; set; } = TestConstants.SystemUid;
+            public string name { get; set; } = TestConstants.SystemName;
             public List<Vehicle>? vehicles { get; set; }
         }
         public QueryReplyData data { get; set;} = new QueryReplyData();
