@@ -38,7 +38,7 @@ namespace WarRoomDemo
             public List<MissionSwarm> swarms { get; set; } = new List<MissionSwarm>() { new MissionSwarm() };
             public int progress { get; set; } = 0;
         }
-        public MissionStatusData data = new MissionStatusData();
+        public MissionStatusData data { get; set; } = new MissionStatusData();
     }
 
     public class CmdReply
