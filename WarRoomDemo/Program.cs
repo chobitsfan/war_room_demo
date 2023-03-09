@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Net.WebSockets;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading.Tasks;
 
@@ -11,12 +12,53 @@ namespace WarRoomDemo
         public const string SystemName = "Demo DGS";
     }
 
+    public class MyState
+    {
+        public List<Vehicle>? vehicles;
+        public string? missionUid;
+        public string? missionState;
+        public int missionProgress = 0;
+    }
+
+    public class MissionStatus
+    {
+        public string uid { get; set; } = string.Empty;
+        public DateTime timestamp { get; set; } = DateTime.Now;
+        public string type { get; set; } = "missionStatus";
+        public class MissionStatusData
+        {
+            public string? missionUid { get; set; }
+            public string? state { get; set; }
+            public class MissionSwarm
+            {
+                public string swarmUid { get; set; } = string.Empty;
+                public int ammunition { get; set; } = 0;
+            }
+            public List<MissionSwarm> swarms { get; set; } = new List<MissionSwarm>() { new MissionSwarm() };
+            public int progress { get; set; } = 0;
+        }
+    }
+
+    public class CmdReply
+    {
+        public string uid { get; set; } = string.Empty;
+        public DateTime timestamp { get; set; } = DateTime.Now;
+        public string type { get; set; } = "commandReply";
+        public class CmdReplyData
+        {
+            public string? replyCommand { get; set; }
+            public string? missionUid { get; set; }
+            public string reply { get; set; } = "accepted";
+        }
+        public CmdReplyData data { get; set; } = new CmdReplyData();
+    }
+
     public class Vehicle
     {
         public string vehicleUid { get; set; } = "";
         public double[]? position { get; set; }
         public string type { get; set; } = "copter";
-        public string? swarmUid { get; set; }
+        public string swarmUid { get; set; } = string.Empty;
         public bool isLeader { get; set; } = false;
         public class Payload
         {
@@ -66,21 +108,28 @@ namespace WarRoomDemo
 
     internal class Program
     {
-        static async Task Send(ClientWebSocket webSocket, List<Vehicle> vehicles)
+        static async Task Send(ClientWebSocket webSocket, MyState myState)
         {
             var jsonOpt = new JsonSerializerOptions() { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull };
             while (webSocket.State == WebSocketState.Open)
             {
                 DgsStatus dgsStatus = new DgsStatus();
-                dgsStatus.data.vehicles = vehicles;
-                Console.WriteLine("sendin status...");
+                dgsStatus.data.vehicles = myState.vehicles;
+                Console.WriteLine("sending dgs status...");
                 await webSocket.SendAsync(new ReadOnlyMemory<byte>(JsonSerializer.SerializeToUtf8Bytes(dgsStatus, jsonOpt)), WebSocketMessageType.Text, true, CancellationToken.None);
-                Console.WriteLine("status sent");
+                Console.WriteLine("dgs status sent");
+                if (myState.missionUid != null)
+                {
+                    var missionStatus = new MissionStatus();
+                    Console.WriteLine("sending mission status...");
+                    await webSocket.SendAsync(new ReadOnlyMemory<byte>(JsonSerializer.SerializeToUtf8Bytes(missionStatus, jsonOpt)), WebSocketMessageType.Text, true, CancellationToken.None);
+                    Console.WriteLine("dgs status sent");
+                }
                 await Task.Delay(1000);
             }
         }
 
-        static async Task Receive(ClientWebSocket webSocket, List<Vehicle> vehicles)
+        static async Task Receive(ClientWebSocket webSocket, MyState myState)
         {
             var jsonOpt = new JsonSerializerOptions() { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull };
             Memory<byte> buf = new Memory<byte>(new byte[4096]);
@@ -103,15 +152,43 @@ namespace WarRoomDemo
                     Console.WriteLine("rcv " + warRoomPkt.type);
                     if (warRoomPkt.type == "query")
                     {
-                        var queryContent = warRoomPkt.data.GetProperty("queryContent");
-                        if (queryContent.GetString() == "system")
+                        var queryContent = warRoomPkt.data.GetProperty("queryContent").GetString();
+                        if (queryContent == "system")
                         {
                             Console.WriteLine("rcv system query");
-                            QueryReply queryReply = new QueryReply();
-                            queryReply.data.replyTo = warRoomPkt.uid;
-                            queryReply.data.vehicles = vehicles;
-                            await webSocket.SendAsync(new ReadOnlyMemory<byte>(JsonSerializer.SerializeToUtf8Bytes(queryReply, jsonOpt)), WebSocketMessageType.Text, true, CancellationToken.None);
+                            var reply = new QueryReply();
+                            reply.data.replyTo = warRoomPkt.uid;
+                            reply.data.vehicles = myState.vehicles;
+                            await webSocket.SendAsync(new ReadOnlyMemory<byte>(JsonSerializer.SerializeToUtf8Bytes(reply, jsonOpt)), WebSocketMessageType.Text, true, CancellationToken.None);
                         }
+                    }
+                    else if (warRoomPkt.type == "command")
+                    {
+                        var cmd = warRoomPkt.data.GetProperty("command").GetString();
+                        var missionUid = warRoomPkt.data.GetProperty("missionUid").GetString();
+                        myState.missionUid = missionUid;
+                        if (cmd == "assign")
+                        {
+                            Console.WriteLine("rcv assign");
+                            myState.missionState = "ready";
+                            myState.missionProgress = 0;
+                            var tgts = warRoomPkt.data.GetProperty("targets");
+                            foreach (var tgt in tgts.EnumerateArray())
+                            {
+                                if (tgt.GetProperty("type").GetString() == "position")
+                                {
+
+                                }
+                            }
+                        }
+                        else if (cmd == "engage")
+                        {
+
+                        }
+                        var reply = new CmdReply();
+                        reply.data.replyCommand = cmd;
+                        reply.data.missionUid = missionUid;
+                        await webSocket.SendAsync(new ReadOnlyMemory<byte>(JsonSerializer.SerializeToUtf8Bytes(reply, jsonOpt)), WebSocketMessageType.Text, true, CancellationToken.None);
                     }
                 }
             }
@@ -127,6 +204,8 @@ namespace WarRoomDemo
                     position = new double[] { 24.773252, 121.046107, 30 }
                 }
             };
+            var myState = new MyState();
+            myState.vehicles = vehicles;
 
             ClientWebSocket webSocket = new ClientWebSocket();
             Console.WriteLine("connecting...");
@@ -138,7 +217,7 @@ namespace WarRoomDemo
             webSocket.ConnectAsync(new Uri(uri), CancellationToken.None).Wait();
             Console.WriteLine("connected");
 
-            Task.WaitAll(Receive(webSocket, vehicles), Send(webSocket, vehicles));
+            Task.WaitAll(Receive(webSocket, myState), Send(webSocket, myState));
         }
     }
 }
