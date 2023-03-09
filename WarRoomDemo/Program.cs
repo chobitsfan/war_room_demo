@@ -18,6 +18,7 @@ namespace WarRoomDemo
         public string? missionUid;
         public string? missionState;
         public int missionProgress = 0;
+        public double[]? tgtPos;
     }
 
     public class MissionStatus
@@ -37,6 +38,7 @@ namespace WarRoomDemo
             public List<MissionSwarm> swarms { get; set; } = new List<MissionSwarm>() { new MissionSwarm() };
             public int progress { get; set; } = 0;
         }
+        public MissionStatusData data = new MissionStatusData();
     }
 
     public class CmdReply
@@ -121,9 +123,23 @@ namespace WarRoomDemo
                 if (myState.missionUid != null)
                 {
                     var missionStatus = new MissionStatus();
+                    missionStatus.data.missionUid = myState.missionUid;
+                    missionStatus.data.progress = myState.missionProgress;
+                    missionStatus.data.state = myState.missionState;
                     Console.WriteLine("sending mission status...");
                     await webSocket.SendAsync(new ReadOnlyMemory<byte>(JsonSerializer.SerializeToUtf8Bytes(missionStatus, jsonOpt)), WebSocketMessageType.Text, true, CancellationToken.None);
-                    Console.WriteLine("dgs status sent");
+                    Console.WriteLine("mission status sent");
+                    if (myState.missionState == "engaging")
+                    {
+                        if (myState.missionProgress > 99)
+                        {
+                            myState.missionState = "completed";
+                        }
+                        else
+                        {
+                            myState.missionProgress += 1;
+                        }
+                    }
                 }
                 await Task.Delay(1000);
             }
@@ -155,7 +171,7 @@ namespace WarRoomDemo
                         var queryContent = warRoomPkt.data.GetProperty("queryContent").GetString();
                         if (queryContent == "system")
                         {
-                            Console.WriteLine("rcv system query");
+                            Console.WriteLine("system query");
                             var reply = new QueryReply();
                             reply.data.replyTo = warRoomPkt.uid;
                             reply.data.vehicles = myState.vehicles;
@@ -169,7 +185,7 @@ namespace WarRoomDemo
                         myState.missionUid = missionUid;
                         if (cmd == "assign")
                         {
-                            Console.WriteLine("rcv assign");
+                            Console.WriteLine("mission assign");
                             myState.missionState = "ready";
                             myState.missionProgress = 0;
                             var tgts = warRoomPkt.data.GetProperty("targets");
@@ -183,7 +199,9 @@ namespace WarRoomDemo
                         }
                         else if (cmd == "engage")
                         {
-
+                            Console.WriteLine("mission engage");
+                            myState.missionState = "engaging";
+                            myState.missionProgress = 0;
                         }
                         var reply = new CmdReply();
                         reply.data.replyCommand = cmd;
