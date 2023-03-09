@@ -193,7 +193,8 @@ namespace WarRoomDemo
                             {
                                 if (tgt.GetProperty("type").GetString() == "position")
                                 {
-
+                                    myState.tgtPos = tgt.GetProperty("position").Deserialize<double[]>();
+                                    Console.WriteLine("tgt pos " + myState.tgtPos);
                                 }
                             }
                         }
