@@ -117,27 +117,22 @@ namespace WarRoomDemo
             {
                 DgsStatus dgsStatus = new DgsStatus();
                 dgsStatus.data.vehicles = myState.vehicles;
-                Console.WriteLine("sending dgs status...");
                 await webSocket.SendAsync(new ReadOnlyMemory<byte>(JsonSerializer.SerializeToUtf8Bytes(dgsStatus, jsonOpt)), WebSocketMessageType.Text, true, CancellationToken.None);
-                Console.WriteLine("dgs status sent");
                 if (myState.missionUid != null)
                 {
                     var missionStatus = new MissionStatus();
                     missionStatus.data.missionUid = myState.missionUid;
                     missionStatus.data.progress = myState.missionProgress;
                     missionStatus.data.state = myState.missionState;
-                    Console.WriteLine("sending mission status...");
                     await webSocket.SendAsync(new ReadOnlyMemory<byte>(JsonSerializer.SerializeToUtf8Bytes(missionStatus, jsonOpt)), WebSocketMessageType.Text, true, CancellationToken.None);
-                    Console.WriteLine("mission status sent");
+                    Console.WriteLine("mission status sent, progress " + missionStatus.data.progress);
                     if (myState.missionState == "engaging")
                     {
-                        if (myState.missionProgress > 99)
+                        myState.missionProgress += 5;
+                        if (myState.missionProgress >= 100)
                         {
+                            myState.missionProgress = 100;
                             myState.missionState = "completed";
-                        }
-                        else
-                        {
-                            myState.missionProgress += 1;
                         }
                     }
                 }
@@ -171,11 +166,11 @@ namespace WarRoomDemo
                         var queryContent = warRoomPkt.data.GetProperty("queryContent").GetString();
                         if (queryContent == "system")
                         {
-                            Console.WriteLine("system query");
                             var reply = new QueryReply();
                             reply.data.replyTo = warRoomPkt.uid;
                             reply.data.vehicles = myState.vehicles;
                             await webSocket.SendAsync(new ReadOnlyMemory<byte>(JsonSerializer.SerializeToUtf8Bytes(reply, jsonOpt)), WebSocketMessageType.Text, true, CancellationToken.None);
+                            Console.WriteLine("reply query");
                         }
                     }
                     else if (warRoomPkt.type == "command")
@@ -194,7 +189,7 @@ namespace WarRoomDemo
                                 if (tgt.GetProperty("type").GetString() == "position")
                                 {
                                     myState.tgtPos = tgt.GetProperty("position").Deserialize<double[]>();
-                                    Console.WriteLine("tgt pos " + myState.tgtPos);
+                                    if (myState.tgtPos != null) Console.WriteLine("tgt pos " + string.Join(",", myState.tgtPos));
                                 }
                             }
                         }
