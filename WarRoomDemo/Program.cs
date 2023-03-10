@@ -243,6 +243,11 @@ namespace WarRoomDemo
                 {
                     vehicleUid = "itri-1",
                     position = new double[] { 24.773252, 121.046107, 30 }
+                },
+                new Vehicle
+                {
+                    vehicleUid = "itri-2",
+                    position = new double[] { 24.773292, 121.046157, 35 }
                 }
             };
             var myState = new MyState();
