@@ -14,7 +14,7 @@ namespace WarRoomDemo
 
     public class MyState
     {
-        public List<Vehicle>? vehicles;
+        public List<Vehicle> vehicles = new List<Vehicle>();
         public string? missionUid;
         public string? missionState;
         public int missionProgress = 0;
@@ -58,7 +58,7 @@ namespace WarRoomDemo
     public class Vehicle
     {
         public string vehicleUid { get; set; } = "";
-        public double[]? position { get; set; }
+        public double[] position { get; set; } = new double[3];
         public string type { get; set; } = "copter";
         public string swarmUid { get; set; } = string.Empty;
         public bool isLeader { get; set; } = false;
@@ -68,6 +68,7 @@ namespace WarRoomDemo
             public int amount { get; set; }
         }
         public List<Payload> payloads { get; set; } = new List<Payload>();
+        public double[] moveStep = new double[3];
     }
 
     public class DgsStatus
@@ -134,6 +135,18 @@ namespace WarRoomDemo
                             myState.missionProgress = 100;
                             myState.missionState = "completed";
                         }
+                        else
+                        {
+                            foreach (var vehicle in myState.vehicles)
+                            {
+                                vehicle.position[0] += vehicle.moveStep[0];
+                                vehicle.position[1] += vehicle.moveStep[1];
+                            }
+                        }
+                    }
+                    else if (myState.missionState == "finished" || myState.missionState == "canceled")
+                    {
+                        myState.missionUid = null;
                     }
                 }
                 await Task.Delay(1000);
@@ -188,8 +201,17 @@ namespace WarRoomDemo
                             {
                                 if (tgt.GetProperty("type").GetString() == "position")
                                 {
-                                    myState.tgtPos = tgt.GetProperty("position").Deserialize<double[]>();
-                                    if (myState.tgtPos != null) Console.WriteLine("tgt pos " + string.Join(",", myState.tgtPos));
+                                    var tgtPos = tgt.GetProperty("position").Deserialize<double[]>();
+                                    if (tgtPos != null)
+                                    {
+                                        Console.WriteLine("tgt pos " + string.Join(",", tgtPos));
+                                        myState.tgtPos = tgtPos;
+                                        foreach (var vehicle in myState.vehicles)
+                                        {
+                                            vehicle.moveStep[0] = (tgtPos[0] - vehicle.position[0]) / 20.0;
+                                            vehicle.moveStep[1] = (tgtPos[1] - vehicle.position[1]) / 20.0;
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -198,6 +220,11 @@ namespace WarRoomDemo
                             Console.WriteLine("mission engage");
                             myState.missionState = "engaging";
                             myState.missionProgress = 0;
+                        }
+                        else if (cmd == "terminate")
+                        {
+                            Console.WriteLine("mission terminate");
+                            if (myState.missionState == "completed") myState.missionState = "finished"; else myState.missionState = "canceled";
                         }
                         var reply = new CmdReply();
                         reply.data.replyCommand = cmd;
