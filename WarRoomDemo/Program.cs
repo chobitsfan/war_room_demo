@@ -183,12 +183,12 @@ namespace WarRoomDemo
             while (webSocket.State == WebSocketState.Open)
             {
                 var result =  await webSocket.ReceiveAsync(buf, CancellationToken.None);
-                string str = System.Text.Encoding.UTF8.GetString(buf.ToArray(), 0, result.Count);
-                Console.WriteLine("rcv msg:" + str);
+                //string str = System.Text.Encoding.UTF8.GetString(buf.ToArray(), 0, result.Count);
+                //Console.WriteLine("rcv msg:" + str);
                 WarRoomPkt? warRoomPkt = null;
                 try
                 {
-                    warRoomPkt = JsonSerializer.Deserialize<WarRoomPkt>(str);
+                    warRoomPkt = JsonSerializer.Deserialize<WarRoomPkt>(buf.Span[..result.Count]);
                 }
                 catch (JsonException ex)
                 {
