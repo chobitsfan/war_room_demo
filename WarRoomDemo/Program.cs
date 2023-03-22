@@ -7,10 +7,16 @@ using System.Threading.Tasks;
 
 namespace WarRoomDemo
 {
-    public static class TestConstants
+    public static class DGSSetting
     {
-        public const string SystemUid = "TestSys01";
-        public const string SystemName = "Demo DGS";
+        public const string BaseUid = "TestSys";
+        public const string BaseName = "Demo DGS";
+
+
+        public static string SystemUid => BaseUid + (string.IsNullOrEmpty(SystemPostfix) ? "" : "-" + SystemPostfix);
+        public static string SystemName => BaseName + (string.IsNullOrEmpty(SystemPostfix) ? "" : " " + SystemPostfix);
+
+        public static string SystemPostfix { get; set; } = "";
     }
 
     public class MyState
@@ -49,7 +55,7 @@ namespace WarRoomDemo
             public string? state { get; set; }
             public class MissionSwarm
             {
-                public string swarmUid { get; set; } = string.Empty;
+                public string swarmUid { get; set; } = DGSSetting.SystemUid + "-swarm-01";
                 public int ammunition { get; set; } = 0;
             }
             public List<MissionSwarm> swarms { get; set; } = new List<MissionSwarm>() { new MissionSwarm() };
@@ -77,7 +83,7 @@ namespace WarRoomDemo
         public string vehicleUid { get; set; } = "";
         public double[] position { get; set; } = new double[3];
         public string type { get; set; } = "copter";
-        public string swarmUid { get; set; } = string.Empty;
+        public string swarmUid { get; set; } = DGSSetting.SystemUid + "-swarm-01";
         public bool isLeader { get; set; } = false;
         public class Payload
         {
@@ -95,7 +101,7 @@ namespace WarRoomDemo
         public string type { get; set; } = "dgsStatus";
         public class DgsStatusData
         {
-            public string systemUid { get; set; } = TestConstants.SystemUid;
+            public string systemUid { get; set; } = DGSSetting.SystemUid;
             public int ttl { get; set; } = 1;
             public List<Vehicle>? vehicles { get; set; }
         };
@@ -111,8 +117,8 @@ namespace WarRoomDemo
         {
             public string replyContent { get; set; } = "system";
             public string replyTo { get; set; } = "";
-            public string systemUid { get; set; } = TestConstants.SystemUid;
-            public string name { get; set; } = TestConstants.SystemName;
+            public string systemUid { get; set; } = DGSSetting.SystemUid;
+            public string name { get; set; } = DGSSetting.SystemName;
             public List<Vehicle>? vehicles { get; set; }
         }
         public QueryReplyData data { get; set;} = new QueryReplyData();
@@ -146,7 +152,7 @@ namespace WarRoomDemo
                     Console.WriteLine("mission status sent, progress " + missionStatus.data.progress);
                     if (myState.missionState == "engaging")
                     {
-                        myState.missionProgress += 5;
+                        myState.missionProgress += 4;
                         if (myState.missionProgress >= 100)
                         {
                             myState.missionProgress = 100;
@@ -162,8 +168,12 @@ namespace WarRoomDemo
                         {
                             foreach (var vehicle in myState.vehicles)
                             {
-                                vehicle.position[0] += vehicle.moveStep[0];
-                                vehicle.position[1] += vehicle.moveStep[1];
+                                if (vehicle.isLeader && myState.missionProgress <= 80 ||
+                                    !vehicle.isLeader && myState.missionProgress >= 20)
+                                {
+                                    vehicle.position[0] += vehicle.moveStep[0];
+                                    vehicle.position[1] += vehicle.moveStep[1];
+                                }
                             }
                         }
                     }
@@ -260,16 +270,20 @@ namespace WarRoomDemo
 
         static void Main(string[] args)
         {
+            if (args.Length > 1)
+                DGSSetting.SystemPostfix = args[1];
+
             List<Vehicle> vehicles = new()
             {
                 new Vehicle
                 {
-                    vehicleUid = "itri-1",
-                    position = new double[] { 24.773252, 121.046107, 30 }
+                    vehicleUid = DGSSetting.SystemUid + "-itri-drone-1",
+                    position = new double[] { 24.773252, 121.046107, 30 },
+                    isLeader = true
                 },
                 new Vehicle
                 {
-                    vehicleUid = "itri-2",
+                    vehicleUid = DGSSetting.SystemUid + "-itri-drone-2",
                     position = new double[] { 24.773292, 121.046157, 35 }
                 }
             };

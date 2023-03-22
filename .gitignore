@@ -1,0 +1,7 @@
+﻿################################################################################
+# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
+################################################################################
+
+/WarRoomDemo/bin/Debug/net6.0
+/WarRoomDemo/obj
+/.vs
