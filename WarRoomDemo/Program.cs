@@ -17,6 +17,9 @@ namespace WarRoomDemo
         public static string SystemName => BaseName + (string.IsNullOrEmpty(SystemPostfix) ? "" : " " + SystemPostfix);
 
         public static string SystemPostfix { get; set; } = "";
+
+        public const double DefaultLatitude = 24.773252;
+        public const double DefaultLongitude = 121.046107;
     }
 
     public class MyState
@@ -74,6 +77,7 @@ namespace WarRoomDemo
             public string? replyCommand { get; set; }
             public string? missionUid { get; set; }
             public string reply { get; set; } = "accepted";
+            public string? description { get; set; }
         }
         public CmdReplyData data { get; set; } = new CmdReplyData();
     }
@@ -148,6 +152,8 @@ namespace WarRoomDemo
                     missionStatus.data.missionUid = myState.missionUid;
                     missionStatus.data.progress = myState.missionProgress;
                     missionStatus.data.state = myState.missionState;
+                    missionStatus.data.swarms.ForEach(s => s.ammunition =
+                        myState.vehicles.Where(v => v.swarmUid == s.swarmUid).Sum(v => v.payloads.Sum(p => p.amount)));
                     await webSocket.SendAsync(new ReadOnlyMemory<byte>(JsonSerializer.SerializeToUtf8Bytes(missionStatus, jsonOpt)), WebSocketMessageType.Text, true, CancellationToken.None);
                     Console.WriteLine("mission status sent, progress " + missionStatus.data.progress);
                     if (myState.missionState == "engaging")
@@ -220,92 +226,190 @@ namespace WarRoomDemo
                             await webSocket.SendAsync(new ReadOnlyMemory<byte>(JsonSerializer.SerializeToUtf8Bytes(reply, jsonOpt)), WebSocketMessageType.Text, true, CancellationToken.None);
                             Console.WriteLine("reply query");
                         }
+
+                        if (warRoomPkt.data.TryGetProperty("location", out var json))
+                        {
+                            var loc = json.Deserialize<double[]>();
+                            if (loc != null)
+                            {
+                                myState.vehicles.ForEach(v => Array.Copy(loc, v.position, 2));
+                            }
+                        }
                     }
                     else if (warRoomPkt.type == "command")
                     {
+                        string? rejectReason = "";
                         var cmd = warRoomPkt.data.GetProperty("command").GetString();
                         var missionUid = warRoomPkt.data.GetProperty("missionUid").GetString();
-                        myState.missionUid = missionUid;
                         if (cmd == "assign")
                         {
-                            Console.WriteLine("mission assign");
-                            myState.missionState = "ready";
-                            myState.missionProgress = 0;
-                            var tgts = warRoomPkt.data.GetProperty("targets");
-                            foreach (var tgt in tgts.EnumerateArray())
+                            if (myState.missionUid == null)
                             {
-                                if (tgt.GetProperty("type").GetString() == "position")
+                                Console.WriteLine("mission assign");
+                                myState.missionState = "ready";
+                                myState.missionProgress = 0;
+                                var tgts = warRoomPkt.data.GetProperty("targets");
+                                foreach (var tgt in tgts.EnumerateArray())
                                 {
-                                    var tgtPos = tgt.GetProperty("position").Deserialize<double[]>();
-                                    if (tgtPos != null)
+                                    if (tgt.GetProperty("type").GetString() == "position")
                                     {
-                                        Console.WriteLine("tgt pos " + string.Join(",", tgtPos));
-                                        myState.tgtPos = tgtPos;
-                                        foreach (var vehicle in myState.vehicles)
+                                        var tgtPos = tgt.GetProperty("position").Deserialize<double[]>();
+                                        if (tgtPos != null)
                                         {
-                                            vehicle.moveStep[0] = (tgtPos[0] - vehicle.position[0]) / 20.0;
-                                            vehicle.moveStep[1] = (tgtPos[1] - vehicle.position[1]) / 20.0;
+                                            Console.WriteLine("tgt pos " + string.Join(",", tgtPos));
+                                            myState.tgtPos = tgtPos;
+                                            foreach (var vehicle in myState.vehicles)
+                                            {
+                                                vehicle.moveStep[0] = (tgtPos[0] - vehicle.position[0]) / 20.0;
+                                                vehicle.moveStep[1] = (tgtPos[1] - vehicle.position[1]) / 20.0;
+                                            }
                                         }
                                     }
                                 }
+                                myState.missionUid = missionUid;
+                                rejectReason = null;
+                            }
+                            else if (myState.missionUid == missionUid)
+                            {
+                                // already assigned, reply with ack
+                                rejectReason = null;
+                            }
+                            else //if (myState.missionUid != missionUid)
+                            {
+                                rejectReason = "System is busy.";
                             }
                         }
-                        else if (cmd == "engage")
+                        else if (myState.missionUid == missionUid)
                         {
-                            Console.WriteLine("mission engage");
-                            myState.missionState = "engaging";
-                            myState.missionProgress = 0;
+                            if (cmd == "engage")
+                            {
+                                Console.WriteLine("mission engage");
+                                myState.missionState = "engaging";
+                                myState.missionProgress = 0;
+                                rejectReason = null;
+                            }
+                            else if (cmd == "terminate")
+                            {
+                                Console.WriteLine("mission terminate");
+                                if (myState.missionState == "completed") myState.missionState = "finished"; else myState.missionState = "canceled";
+                                rejectReason = null;
+                            }
+
                         }
-                        else if (cmd == "terminate")
+
+                        if (rejectReason?.Length != 0)
                         {
-                            Console.WriteLine("mission terminate");
-                            if (myState.missionState == "completed") myState.missionState = "finished"; else myState.missionState = "canceled";
+                            // null: accept, nonnull & nonempty: reject
+                            var reply = new CmdReply
+                            {
+                                data = new CmdReply.CmdReplyData
+                                {
+                                    replyCommand = cmd,
+                                    missionUid = missionUid,
+                                    reply = rejectReason == null ? "accepted" : "rejected",
+                                    description = rejectReason
+                                }
+                            };
+                            await webSocket.SendAsync(new ReadOnlyMemory<byte>(JsonSerializer.SerializeToUtf8Bytes(reply, jsonOpt)), WebSocketMessageType.Text, true, CancellationToken.None);
                         }
-                        var reply = new CmdReply();
-                        reply.data.replyCommand = cmd;
-                        reply.data.missionUid = missionUid;
-                        await webSocket.SendAsync(new ReadOnlyMemory<byte>(JsonSerializer.SerializeToUtf8Bytes(reply, jsonOpt)), WebSocketMessageType.Text, true, CancellationToken.None);
                     }
                 }
             }
         }
 
+        static double initLat = DGSSetting.DefaultLatitude;
+        static double initLng = DGSSetting.DefaultLongitude;
+
+        static int swarmSN = 0;
+        static int vehicleSN = 0;
+
+        static void AddSwarm(List<Vehicle> vehicles)
+        {
+            string swarmUid = $"{DGSSetting.SystemUid}-swarm-{++swarmSN:00}";
+            string vehicleUid() => $"{DGSSetting.SystemUid}-drone-{++vehicleSN:00}";
+            vehicles.Add(new Vehicle
+            {
+                vehicleUid = vehicleUid(),
+                swarmUid = swarmUid,
+                position = new double[] { initLat, initLng + vehicleSN * 0.0001, 30 },
+                isLeader = true,
+                payloads = new List<Vehicle.Payload>
+                {
+                    new Vehicle.Payload
+                    {
+                        type = "guidedBomb",
+                        amount = 1,
+                    }
+                },
+            });
+            vehicles.Add(new Vehicle
+            {
+                vehicleUid = vehicleUid(),
+                swarmUid = swarmUid,
+                position = new double[] { initLat + 0.0005, initLng + vehicleSN * 0.001, 35 },
+                payloads = new List<Vehicle.Payload> { new Vehicle.Payload { amount = 1 } }
+            });
+        }
+
         static void Main(string[] args)
         {
-            if (args.Length > 1)
-                DGSSetting.SystemPostfix = args[1];
-
-            List<Vehicle> vehicles = new()
+            int argptr = 0, arglen = args.Length, swarms = 1;
+            string uri;
+            if (arglen > 0)
             {
-                new Vehicle
+                uri = args[0];
+            }
+            else
+            {
+                Console.WriteLine("Usage: WarRoomDemo <server uri> [dgs postfix] [[-switch arg] ...]");
+                return;
+            }
+            if (arglen > 1 && !args[1].StartsWith('-'))
+            {
+                DGSSetting.SystemPostfix = args[1];
+                argptr++;
+            }
+            while (++argptr < arglen)
+            {
+                string opt = args[argptr];
+                if (opt[0] == '-' && ++argptr < arglen)
                 {
-                    vehicleUid = DGSSetting.SystemUid + "-itri-drone-1",
-                    position = new double[] { 24.773252, 121.046107, 30 },
-                    isLeader = true,
-                },
-                new Vehicle
-                {
-                    vehicleUid = DGSSetting.SystemUid + "-itri-drone-2",
-                    position = new double[] { 24.773292, 121.046157, 35 },
-                    payloads = new List<Vehicle.Payload> { new Vehicle.Payload { amount = 1 } }
+                    string arg = args[argptr];
+                    switch (opt)
+                    {
+                        case "-swarms":
+                            int.TryParse(arg, out swarms);
+                            break;
+                        case "-loc":
+                        case "-location":
+                        case "-startlocation":
+                        case "-startloc":
+                            try
+                            {
+                                var loc = arg.Split(',');
+                                var lat = double.Parse(loc[0]);
+                                var lng = double.Parse(loc[1]);
+                                initLat = lat;
+                                initLng = lng;
+                            }
+                            catch { }
+                            break;
+                    }
                 }
-            };
+            }
+
+            List<Vehicle> vehicles = new();
+            while (swarms-- > 0)
+            {
+                AddSwarm(vehicles);
+            }
+
             var myState = new MyState();
             myState.vehicles = vehicles;
 
             ClientWebSocket webSocket = new ClientWebSocket();
             //webSocket.Options.ClientCertificates.Add(new System.Security.Cryptography.X509Certificates.X509Certificate2("D:\\戰情中心\\certs\\ccclient.pfx", "ccclient"));
             Console.WriteLine("connecting...");
-            string uri;
-            if (args.Length > 0)
-            {
-                uri = args[0];
-            }
-            else
-            {
-                Console.WriteLine("Usage: WarRoomDemo <server uri> [dgs postfix]");
-                return;
-            }
             webSocket.ConnectAsync(new Uri(uri), CancellationToken.None).Wait();
             Console.WriteLine("connected");
 
