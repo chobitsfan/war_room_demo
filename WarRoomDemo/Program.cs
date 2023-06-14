@@ -33,17 +33,20 @@ namespace WarRoomDemo
 
     public class MyState
     {
-        public List<Vehicle> vehicles = new List<Vehicle>();
+        public readonly List<Vehicle> vehicles = new List<Vehicle>();
         public string? missionUid;
         public string? missionState;
         public int missionProgress = 0;
         public double[]? tgtPos;
         public AttackTarget[] targets = Array.Empty<AttackTarget>();
 
-        public List<string> swarms = new();
-        public List<List<Vehicle>> swarmVehicles = new();
-        public List<List<SwarmMission>> swarmMissions = new();
-        public List<int> swarmCurrentMission = new();
+        public readonly List<string> swarms = new();
+        public readonly List<List<Vehicle>> swarmVehicles = new();
+        public readonly List<List<SwarmMission>> swarmMissions = new();
+        public readonly List<int> swarmCurrentMission = new();
+        public int totalSwarmMissions = 0;
+
+        public int missionFadeCounter = 3;
     }
 
     public class MissionEvent
@@ -97,7 +100,7 @@ namespace WarRoomDemo
             {
                 missionUid = state.missionUid;
                 this.state = state.missionState;
-                int totalSubmissions = 0, totalSubmissionProgress = 0;
+                int totalSubmissionProgress = 0;
                 for (int i = 0; i < state.swarms.Count; i++)
                 {
                     if (state.swarmCurrentMission[i] < state.swarmMissions[i].Count)
@@ -109,10 +112,9 @@ namespace WarRoomDemo
                             target = new ReportAttackTarget(state.swarmMissions[i][state.swarmCurrentMission[i]].target)
                         });
                     }
-                    totalSubmissions += state.swarmMissions[i].Count;
                     totalSubmissionProgress += state.swarmMissions[i].Sum(m => m.progress);
                 }
-                progress = (int)(0.1 + totalSubmissionProgress * 0.01 * totalSubmissions);
+                progress = (int)((totalSubmissionProgress + 0.1) / state.totalSwarmMissions);
                 if (progress > 100) progress = 100;
             }
         }
@@ -121,6 +123,7 @@ namespace WarRoomDemo
         public MissionStatus(MyState state)
         {
             data = new MissionStatusData(state);
+            state.missionProgress = data.progress;
         }
     }
 
@@ -306,9 +309,15 @@ namespace WarRoomDemo
                             }
                         }
                     }
-                    else if (myState.missionState == "finished" || myState.missionState == "canceled")
+                    else if (myState.missionState == "finished"
+                        || myState.missionState == "canceled"
+                        || myState.missionState == "completed")
                     {
-                        myState.missionUid = null;
+                        if (--myState.missionFadeCounter < 0)
+                        {
+                            myState.missionFadeCounter = 3;
+                            myState.missionUid = null;
+                        }
                     }
                 }
                 await Task.Delay(1000);
@@ -416,12 +425,11 @@ namespace WarRoomDemo
 
         private static string? VerifyMissionAssignment(MyState myState, WarRoomPkt warRoomPkt, string missionUid)
         {
-            string? rejectReason = "";
             var targets = warRoomPkt.data.GetProperty("targets").Deserialize<AttackTarget[]>() ?? Array.Empty<AttackTarget>();
 
             int guided = 0, gravity = 0, others = 0;
             var swarms = myState.swarms;
-            var nswarms = swarms.Count;
+            int nswarms = swarms.Count;
             int[] sguided = new int[nswarms], sgravity = new int[nswarms];
             for (int i = 0; i < nswarms; i++)
             {
@@ -454,7 +462,6 @@ namespace WarRoomDemo
             }
 
             Console.WriteLine("mission assign");
-            myState.missionState = "ready";
             myState.missionProgress = 0;
             myState.targets = targets;
 
@@ -496,9 +503,15 @@ namespace WarRoomDemo
                 }
             }
             myState.missionUid = missionUid;
-            rejectReason = null;
+            myState.missionState = "ready";
+            myState.swarmCurrentMission.Clear();
+            foreach (var i in sguided)
+            {
+                myState.swarmCurrentMission.Add(0);
+            }
+            myState.totalSwarmMissions = myState.swarmMissions.Sum(s => s.Count);
 
-            return rejectReason;
+            return null;
         }
 
         static double initLat = DGSSetting.DefaultLatitude;
@@ -588,7 +601,6 @@ namespace WarRoomDemo
             }
 
             var myState = new MyState();
-            myState.vehicles = new List<Vehicle>();
             while (swarms-- > 0)
             {
                 AddSwarm(myState);
