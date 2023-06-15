@@ -260,50 +260,49 @@ namespace WarRoomDemo
                         }
                         else
                         {
-                            for (int i = 0; i < myState.swarms.Count; i++)
+                            for (int i = 0; i < myState.swarms.Count; ++i)
                             {
-                                while (myState.swarmCurrentMission[i] < myState.swarmMissions[i].Count)
+                                if (myState.swarmCurrentMission[i] < myState.swarmMissions[i].Count)
                                 {
                                     var m = myState.swarmMissions[i][myState.swarmCurrentMission[i]];
-                                    if (m.progress >= 100)
-                                    {
-                                        async Task SendAttackEvent(Vehicle v, int count)
-                                        {
-                                            var evt = new MissionEvent(myState.missionUid, m.target.position);
-                                            evt.data.vehicleUid = v.vehicleUid;
-                                            evt.data.targetUid = m.target.targetUid;
-                                            if (m.count > 1) evt.data.count = m.count;
-                                            await webSocket.SendAsync(new ReadOnlyMemory<byte>(JsonSerializer.SerializeToUtf8Bytes(evt, jsonOpt)), WebSocketMessageType.Text, true, CancellationToken.None);
-                                            Console.WriteLine("mission event sent");
-                                        }
-
-                                        _ = myState.swarmVehicles[i].Any(v => v.payloads.Where(p =>
-                                            p.type == "guidedBomb" && m.target.action == "snipe" ||
-                                            p.type == "gravityBomb" && m.target.action == "bombard").Any(p =>
-                                            {
-                                                int count = p.amount > m.count ? m.count : p.amount;
-                                                Task.Run(() => SendAttackEvent(v, count));
-                                                m.count -= count;
-                                                p.amount -= count;
-                                                return m.count == 0;
-                                            }));
-                                        myState.swarmCurrentMission[i]++;
-                                    }
-                                    else
+                                    if (m.progress < 100)
                                     {
                                         var pp = progresses[i % 3];
-                                        var sm = myState.swarmMissions[i][myState.swarmCurrentMission[i]];
-                                        int prog = (sm.progress += pp.step);
+                                        int prog = (m.progress += pp.step);
                                         foreach (var v in myState.swarmVehicles[i])
                                         {
-                                            if (v.isLeader && prog <= pp.tail ||
-                                                !v.isLeader && prog >= pp.lead)
+                                            if (v.isLeader && prog <= pp.tail
+                                                || !v.isLeader && prog >= pp.lead)
                                             {
-                                                v.position[0] += sm.dLat / pp.segments;
-                                                v.position[1] += sm.dLon / pp.segments;
+                                                v.position[0] += m.dLat / pp.segments;
+                                                v.position[1] += m.dLon / pp.segments;
                                             }
                                         }
-                                        break;
+                                        if (m.progress >= 100)
+                                        {
+                                            async Task SendAttackEvent(Vehicle v, int count)
+                                            {
+                                                var evt = new MissionEvent(myState.missionUid, m.target.position);
+                                                evt.data.vehicleUid = v.vehicleUid;
+                                                evt.data.targetUid = m.target.targetUid;
+                                                if (m.count > 1) evt.data.count = m.count;
+                                                await webSocket.SendAsync(new ReadOnlyMemory<byte>(JsonSerializer.SerializeToUtf8Bytes(evt, jsonOpt)), WebSocketMessageType.Text, true, CancellationToken.None);
+                                                Console.WriteLine("mission event sent");
+                                            }
+
+                                            _ = myState.swarmVehicles[i].Any(v => v.payloads.Where(p =>
+                                                p.type == "guidedBomb" && m.target.action == "snipe" ||
+                                                p.type == "gravityBomb" && m.target.action == "bombard").Any(p =>
+                                                {
+                                                    int count = p.amount > m.count ? m.count : p.amount;
+                                                    Task.Run(() => SendAttackEvent(v, count));
+                                                    m.count -= count;
+                                                    p.amount -= count;
+                                                    return m.count == 0;
+                                                }));
+                                            myState.swarmCurrentMission[i]++;
+                                            Console.WriteLine("\t\t swarm " + i + " attacks");
+                                        }
                                     }
                                 }
                             }
@@ -465,6 +464,7 @@ namespace WarRoomDemo
             myState.missionProgress = 0;
             myState.targets = targets;
 
+            int sptr = 0;
             foreach (var t in targets)
             {
                 void fillQuota(ref int quota, ref int stock, int swarmno, AttackTarget target)
@@ -484,28 +484,28 @@ namespace WarRoomDemo
                     stock -= m.count;
                 }
 
-                int amount = t.count, i = 0;
+                int amount = t.count;
                 while (amount > 0)
                 {
                     if (t.action == "snipe")
                     {
-                        fillQuota(ref amount, ref sguided[i], i, t);
+                        fillQuota(ref amount, ref sguided[sptr], sptr, t);
                     }
                     else if (t.action == "bombard")
                     {
-                        fillQuota(ref amount, ref sguided[i], i, t);
+                        fillQuota(ref amount, ref sgravity[sptr], sptr, t);
                     }
                     else
                     {
                         return "Unsuported attack type: " + t.action;
                     }
-                    if (++i >= nswarms) i -= nswarms;
+                    if (++sptr >= nswarms) sptr -= nswarms;
                 }
             }
             myState.missionUid = missionUid;
             myState.missionState = "ready";
             myState.swarmCurrentMission.Clear();
-            foreach (var i in sguided)
+            foreach (var _ in sguided)
             {
                 myState.swarmCurrentMission.Add(0);
             }
@@ -609,10 +609,14 @@ namespace WarRoomDemo
             ClientWebSocket webSocket = new ClientWebSocket();
             //webSocket.Options.ClientCertificates.Add(new System.Security.Cryptography.X509Certificates.X509Certificate2("D:\\戰情中心\\certs\\ccclient.pfx", "ccclient"));
             Console.WriteLine("connecting...");
-            webSocket.ConnectAsync(new Uri(uri), CancellationToken.None).Wait();
-            Console.WriteLine("connected");
 
-            Task.WaitAll(Receive(webSocket, myState), Send(webSocket, myState));
+            try
+            {
+                webSocket.ConnectAsync(new Uri(uri), CancellationToken.None).Wait();
+                Console.WriteLine("connected");
+                Task.WaitAll(Receive(webSocket, myState), Send(webSocket, myState));
+            }
+            catch { }
         }
     }
 }
