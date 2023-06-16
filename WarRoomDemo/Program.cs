@@ -36,7 +36,7 @@ namespace WarRoomDemo
         public readonly List<Vehicle> vehicles = new List<Vehicle>();
         public string? missionUid;
         public string? missionState;
-        public int missionProgress = 0;
+        public int missionProgress;
         public double[]? tgtPos;
         public AttackTarget[] targets = Array.Empty<AttackTarget>();
 
@@ -44,9 +44,10 @@ namespace WarRoomDemo
         public readonly List<List<Vehicle>> swarmVehicles = new();
         public readonly List<List<SwarmMission>> swarmMissions = new();
         public readonly List<int> swarmCurrentMission = new();
-        public int totalSwarmMissions = 0;
+        public int totalSwarmMissions;
 
         public int missionFadeCounter = 3;
+        public bool initialized;
     }
 
     public class MissionEvent
@@ -356,7 +357,7 @@ namespace WarRoomDemo
                             Console.WriteLine("reply query");
                         }
 
-                        if (warRoomPkt.data.TryGetProperty("location", out var json))
+                        if (!myState.initialized && warRoomPkt.data.TryGetProperty("location", out var json))
                         {
                             var loc = json.Deserialize<double[]>();
                             if (loc != null)
@@ -364,6 +365,7 @@ namespace WarRoomDemo
                                 myState.vehicles.ForEach(v => Array.Copy(loc, v.position, 2));
                             }
                         }
+                        myState.initialized = true;
                     }
                     else if (warRoomPkt.type == "command")
                     {
@@ -390,7 +392,6 @@ namespace WarRoomDemo
                             {
                                 Console.WriteLine("mission engage");
                                 myState.missionState = "engaging";
-                                myState.missionProgress = 0;
                                 rejectReason = null;
                             }
                             else if (cmd == "terminate")
@@ -430,11 +431,14 @@ namespace WarRoomDemo
             var swarms = myState.swarms;
             int nswarms = swarms.Count;
             int[] sguided = new int[nswarms], sgravity = new int[nswarms];
+
+            myState.swarmCurrentMission.Clear();
             for (int i = 0; i < nswarms; i++)
             {
                 var s = swarms[i];
                 var vehicles = myState.vehicles.Where(v => v.swarmUid == s);
                 myState.swarmMissions[i].Clear();
+                myState.swarmCurrentMission.Add(0);
                 sguided[i] = vehicles.Sum(v => v.payloads.Where(p => p.type == "guidedBomb").Sum(p => p.amount));
                 sgravity[i] = vehicles.Sum(v => v.payloads.Where(p => p.type == "gravityBomb").Sum(p => p.amount));
 
@@ -467,8 +471,9 @@ namespace WarRoomDemo
             int sptr = 0;
             foreach (var t in targets)
             {
-                void fillQuota(ref int quota, ref int stock, int swarmno, AttackTarget target)
+                bool fillQuota(ref int quota, ref int stock, int swarmno, AttackTarget target)
                 {
+                    if (stock == 0) return false;
                     var missions = myState.swarmMissions[swarmno];
                     double[] lastpos = missions.Count > 0 ? missions.Last().target.position! :
                                                         myState.swarmVehicles[swarmno].First().position;
@@ -482,6 +487,7 @@ namespace WarRoomDemo
                     missions.Add(m);
                     quota -= m.count;
                     stock -= m.count;
+                    return true;
                 }
 
                 int amount = t.count;
@@ -504,11 +510,6 @@ namespace WarRoomDemo
             }
             myState.missionUid = missionUid;
             myState.missionState = "ready";
-            myState.swarmCurrentMission.Clear();
-            foreach (var _ in sguided)
-            {
-                myState.swarmCurrentMission.Add(0);
-            }
             myState.totalSwarmMissions = myState.swarmMissions.Sum(s => s.Count);
 
             return null;
