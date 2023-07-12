@@ -1,9 +1,6 @@
-﻿using System;
-using System.Net.WebSockets;
-using System.Runtime.InteropServices;
+﻿using System.Net.WebSockets;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Threading.Tasks;
 
 namespace WarRoomDemo
 {
@@ -90,7 +87,7 @@ namespace WarRoomDemo
             public string? state { get; set; }
             public class MissionSwarm
             {
-                public string swarmUid { get; set; }
+                public string swarmUid { get; set; } = "";
                 public int ammunition { get; set; }
                 public ReportAttackTarget? target { get; set; }
             }
@@ -156,6 +153,7 @@ namespace WarRoomDemo
             public int amount { get; set; }
         }
         public List<Payload> payloads { get; set; } = new List<Payload>();
+
         public double[] moveStep = new double[3];
     }
 
@@ -185,6 +183,8 @@ namespace WarRoomDemo
             public string systemUid { get; set; } = DGSSetting.SystemUid;
             public string name { get; set; } = DGSSetting.SystemName;
             public List<Vehicle>? vehicles { get; set; }
+            public bool requestDGSStatus { get; set; } = Program.requestDGSStatus;
+            public bool requestReconResults { get; set; } = Program.requestReconResults;
         }
         public QueryReplyData data { get; set;} = new QueryReplyData();
     }
@@ -199,9 +199,9 @@ namespace WarRoomDemo
 
     public class AttackTarget
     {
-        public string action { get; set; }
+        public string action { get; set; } = "";
         public int count { get; set; }
-        public string type { get; set; }
+        public string type { get; set; } = "";
         public string? targetUid { get; set; }
         public double[]? position { get; set; }
         public double[][][]? areas { get; set; }
@@ -223,6 +223,38 @@ namespace WarRoomDemo
         }
     }
 
+    public class ReconTarget
+    {
+        public string objectUid { get; set; } = "";
+        public double[] position { get; set; } = new double[3];
+        public string entityType { get; set; } = "ship";
+
+        public double[] initialPosition = new double[3];
+        public double[] moveStep = new double[3];
+        public int movePeriod = 10;
+        public int hidePeriod = 5;
+        public int moveCounter;
+        public int hideCounter;
+    }
+
+    public class ReconResult
+    {
+        public string uid { get; set; } = Guid.NewGuid().ToString();
+        public DateTime timestamp { get; set; } = DateTime.Now;
+        public string type { get; set; } = "reconResult";
+        public class ReconResultData
+        {
+            public string systemUid { get; set; } = DGSSetting.SystemUid;
+            public int ttl { get; set; } = 1;
+            public List<ReconTarget>? results { get; set; } = reconTargets;
+        };
+        public ReconResultData data { get; set; } = new ReconResultData();
+
+        public static List<ReconTarget>? reconTargets;
+
+        public static bool reportRecon;
+    }
+
     internal class Program
     {
         public class ProgressParameter
@@ -240,18 +272,28 @@ namespace WarRoomDemo
             new ProgressParameter { step = 10, lead = 20}
         };
 
-        static async Task Send(ClientWebSocket webSocket, MyState myState)
+        static JsonSerializerOptions DefaultJsonOpt = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
+
+        static ClientWebSocket? websocket;
+        static async Task SendInJson<T>(T obj, JsonSerializerOptions? opt = null)
         {
-            var jsonOpt = new JsonSerializerOptions() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
-            while (webSocket.State == WebSocketState.Open)
+            if (websocket != null)
+            {
+                await websocket.SendAsync(new ReadOnlyMemory<byte>(JsonSerializer.SerializeToUtf8Bytes(obj, opt ?? DefaultJsonOpt)), WebSocketMessageType.Text, true, CancellationToken.None);
+            }
+        }
+
+        static async Task Send(MyState myState)
+        {
+            while (websocket?.State == WebSocketState.Open)
             {
                 DgsStatus dgsStatus = new DgsStatus();
                 dgsStatus.data.vehicles = myState.vehicles;
-                await webSocket.SendAsync(new ReadOnlyMemory<byte>(JsonSerializer.SerializeToUtf8Bytes(dgsStatus, jsonOpt)), WebSocketMessageType.Text, true, CancellationToken.None);
+                await SendInJson(dgsStatus);
                 if (myState.missionUid != null)
                 {
                     var missionStatus = new MissionStatus(myState);
-                    await webSocket.SendAsync(new ReadOnlyMemory<byte>(JsonSerializer.SerializeToUtf8Bytes(missionStatus, jsonOpt)), WebSocketMessageType.Text, true, CancellationToken.None);
+                    await SendInJson(missionStatus);
                     Console.WriteLine("mission status sent, progress " + missionStatus.data.progress);
                     if (myState.missionState == "engaging")
                     {
@@ -287,7 +329,7 @@ namespace WarRoomDemo
                                                 evt.data.vehicleUid = v.vehicleUid;
                                                 evt.data.targetUid = m.target.targetUid;
                                                 if (m.count > 1) evt.data.count = m.count;
-                                                await webSocket.SendAsync(new ReadOnlyMemory<byte>(JsonSerializer.SerializeToUtf8Bytes(evt, jsonOpt)), WebSocketMessageType.Text, true, CancellationToken.None);
+                                                await SendInJson(evt);
                                                 Console.WriteLine("mission event sent");
                                             }
 
@@ -320,17 +362,59 @@ namespace WarRoomDemo
                         }
                     }
                 }
+                if (ReconResult.reportRecon)
+                {
+                    void resetPos(ReconTarget t)
+                    {
+                        for (int i = 0; i < 3; i++)
+                            t.position[i] = t.initialPosition[i];
+                        t.moveCounter = t.movePeriod;
+                    }
+
+                    void movePos(ReconTarget t)
+                    {
+                        for (int i = 0; i < 3; i++)
+                            t.position[i] += t.moveStep[i];
+                    }
+
+                    ReconResult.reconTargets!.ForEach(t =>
+                    {
+                        if (t.hideCounter > 0)
+                        {
+                            if (--t.hideCounter == 0)
+                            {
+                                resetPos(t);
+                            }
+                        }
+                        else if (t.moveCounter > 0)
+                        {
+                            if (--t.moveCounter == 0)
+                            {
+                                t.hideCounter = t.hidePeriod;
+                            }
+                            else
+                            {
+                                movePos(t);
+                            }
+                        }
+                        else
+                        {
+                            resetPos(t);
+                        }
+                    });
+
+                    await SendInJson(new ReconResult());
+                }
                 await Task.Delay(1000);
             }
         }
 
-        static async Task Receive(ClientWebSocket webSocket, MyState myState)
+        static async Task Receive(MyState myState)
         {
-            var jsonOpt = new JsonSerializerOptions() { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull };
             Memory<byte> buf = new Memory<byte>(new byte[4096]);
-            while (webSocket.State == WebSocketState.Open)
+            while (websocket?.State == WebSocketState.Open)
             {
-                var result =  await webSocket.ReceiveAsync(buf, CancellationToken.None);
+                var result =  await websocket.ReceiveAsync(buf, CancellationToken.None);
                 //string str = System.Text.Encoding.UTF8.GetString(buf.ToArray(), 0, result.Count);
                 //Console.WriteLine("rcv msg:" + str);
                 WarRoomPkt? warRoomPkt = null;
@@ -353,7 +437,7 @@ namespace WarRoomDemo
                             var reply = new QueryReply();
                             reply.data.replyTo = warRoomPkt.uid;
                             reply.data.vehicles = myState.vehicles;
-                            await webSocket.SendAsync(new ReadOnlyMemory<byte>(JsonSerializer.SerializeToUtf8Bytes(reply, jsonOpt)), WebSocketMessageType.Text, true, CancellationToken.None);
+                            await SendInJson(reply);
                             Console.WriteLine("reply query");
                         }
 
@@ -362,9 +446,21 @@ namespace WarRoomDemo
                             var loc = json.Deserialize<double[]>();
                             if (loc != null)
                             {
+                                initLat = loc[0];
+                                initLng = loc[1];
                                 myState.vehicles.ForEach(v => Array.Copy(loc, v.position, 2));
                             }
                         }
+                        ReconResult.reconTargets?.ForEach(t =>
+                        {
+                            var ip = t.initialPosition;
+                            if (ip[0] == 0 && ip[1] == 0)
+                            {
+                                ip[0] = initLat;
+                                ip[1] = initLng;
+                            }
+                            ReconResult.reportRecon = true;
+                        });
                         myState.initialized = true;
                     }
                     else if (warRoomPkt.type == "command")
@@ -416,7 +512,7 @@ namespace WarRoomDemo
                                     description = rejectReason
                                 }
                             };
-                            await webSocket.SendAsync(new ReadOnlyMemory<byte>(JsonSerializer.SerializeToUtf8Bytes(reply, jsonOpt)), WebSocketMessageType.Text, true, CancellationToken.None);
+                            await SendInJson(reply);
                         }
                     }
                 }
@@ -520,6 +616,10 @@ namespace WarRoomDemo
 
         static int swarmSN = 0;
         static int vehicleSN = 0;
+        static int objectSN = 0;
+
+        public static bool requestDGSStatus;
+        public static bool requestReconResults;
 
         static void AddSwarm(MyState myState)
         {
@@ -578,7 +678,7 @@ namespace WarRoomDemo
                 if (opt[0] == '-' && ++argptr < arglen)
                 {
                     string arg = args[argptr];
-                    switch (opt)
+                    switch (opt.ToLower())
                     {
                         case "-swarms":
                             int.TryParse(arg, out swarms);
@@ -597,6 +697,40 @@ namespace WarRoomDemo
                             }
                             catch { }
                             break;
+                        case "-reqdgs":
+                        case "-requestdgs":
+                        case "-requestdgsstatus":
+                            requestDGSStatus = true;
+                            break;
+                        case "-reqrecon":
+                        case "-requestrecon":
+                        case "-requestreconresults":
+                            requestReconResults = true;
+                            break;
+                        case "-recon":
+                            try
+                            {
+                                string[] argsplit = arg.Split(',');
+                                if (argsplit.Length < 8) break;
+                                int mp = int.Parse(argsplit[0]);
+                                int hp = int.Parse(argsplit[1]);
+                                double[] ip = new double[] { double.Parse(argsplit[2]), double.Parse(argsplit[3]), double.Parse(argsplit[4]) };
+                                double[] step = new double[] { double.Parse(argsplit[5]), double.Parse(argsplit[6]), double.Parse(argsplit[7]) };
+                                ReconResult.reconTargets ??= new List<ReconTarget>();
+                                ReconResult.reconTargets.Add(new ReconTarget
+                                {
+                                    objectUid = $"{DGSSetting.SystemUid}-Object-{++objectSN}",
+                                    movePeriod = mp,
+                                    hidePeriod = hp,
+                                    initialPosition = ip,
+                                    moveStep = step
+                                }); ;
+                            }
+                            catch
+                            {
+                                Console.WriteLine("Invalid recon parameter: expected steps,hidesteps,initlat,initlng,initalt,steplat,steplng,stepalt got: " + arg);
+                            }
+                            break;
                     }
                 }
             }
@@ -607,15 +741,15 @@ namespace WarRoomDemo
                 AddSwarm(myState);
             }
 
-            ClientWebSocket webSocket = new ClientWebSocket();
+            websocket = new ClientWebSocket();
             //webSocket.Options.ClientCertificates.Add(new System.Security.Cryptography.X509Certificates.X509Certificate2("D:\\戰情中心\\certs\\ccclient.pfx", "ccclient"));
             Console.WriteLine("connecting...");
 
             try
             {
-                webSocket.ConnectAsync(new Uri(uri), CancellationToken.None).Wait();
+                websocket.ConnectAsync(new Uri(uri), CancellationToken.None).Wait();
                 Console.WriteLine("connected");
-                Task.WaitAll(Receive(webSocket, myState), Send(webSocket, myState));
+                Task.WaitAll(Receive(myState), Send(myState));
             }
             catch { }
         }

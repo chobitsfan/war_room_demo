@@ -1,8 +1,0 @@
-{
-  "profiles": {
-    "WarRoomDemo": {
-      "commandName": "Project",
-      "commandLineArgs": "ws://localhost:55688/dgs -swarms 3"
-    }
-  }
-}

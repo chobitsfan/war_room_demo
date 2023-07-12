@@ -5,3 +5,5 @@
 /WarRoomDemo/bin/Debug/net6.0
 /WarRoomDemo/obj
 /.vs
+/WarRoomDemo/bin/Debug/WarRoomDemo
+/WarRoomDemo/Properties/launchSettings.json
