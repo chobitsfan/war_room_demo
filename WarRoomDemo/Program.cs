@@ -235,6 +235,40 @@ namespace WarRoomDemo
         public int hidePeriod = 5;
         public int moveCounter;
         public int hideCounter;
+
+        private void ResetPos()
+        {
+            for (int i = 0; i < 3; i++)
+                position[i] = initialPosition[i];
+            moveCounter = movePeriod;
+        }
+
+        public void Move()
+        {
+            if (hideCounter > 0)
+            {
+                if (--hideCounter == 0)
+                {
+                    ResetPos();
+                }
+            }
+            else if (moveCounter > 0)
+            {
+                if (--moveCounter == 0)
+                {
+                    hideCounter = hidePeriod;
+                }
+                else
+                {
+                    for (int i = 0; i < 3; i++)
+                        position[i] += moveStep[i];
+                }
+            }
+            else
+            {
+                ResetPos();
+            }
+        }
     }
 
     public class ReconResult
@@ -246,7 +280,7 @@ namespace WarRoomDemo
         {
             public string systemUid { get; set; } = DGSSetting.SystemUid;
             public int ttl { get; set; } = 1;
-            public List<ReconTarget>? results { get; set; } = reconTargets;
+            public List<ReconTarget>? results { get; set; } = reconTargets?.Where(t => t.moveCounter > 0).ToList();
         };
         public ReconResultData data { get; set; } = new ReconResultData();
 
