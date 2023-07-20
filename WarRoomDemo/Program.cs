@@ -144,7 +144,7 @@ namespace WarRoomDemo
     {
         public string vehicleUid { get; set; } = "";
         public double[] position { get; set; } = new double[3];
-        public string type { get; set; } = "copter";
+        public string type { get; set; } = "";
         public string swarmUid { get; set; } = DGSSetting.SystemUid + "-swarm-01";
         public bool isLeader { get; set; } = false;
         public class Payload
@@ -171,12 +171,12 @@ namespace WarRoomDemo
         public DgsStatusData data { get; set; } = new DgsStatusData();
     }
 
-    public class QueryReply
+    public class QuerySystemReply
     {
         public string uid { get; set; } = Guid.NewGuid().ToString();
         public DateTime timestamp { get; set; } = DateTime.Now;
         public string type { get; set; } = "queryReply";
-        public class QueryReplyData
+        public class QuerySystemReplyData
         {
             public string replyContent { get; set; } = "system";
             public string replyTo { get; set; } = "";
@@ -186,7 +186,7 @@ namespace WarRoomDemo
             public bool requestDGSStatus { get; set; } = Program.requestDGSStatus;
             public bool requestReconResults { get; set; } = Program.requestReconResults;
         }
-        public QueryReplyData data { get; set;} = new QueryReplyData();
+        public QuerySystemReplyData data { get; set;} = new QuerySystemReplyData();
     }
 
     public class WarRoomPkt
@@ -424,7 +424,14 @@ namespace WarRoomDemo
                         {
                             if (--t.moveCounter == 0)
                             {
-                                t.hideCounter = t.hidePeriod;
+                                if (t.hidePeriod > 0)
+                                {
+                                    t.hideCounter = t.hidePeriod;
+                                }
+                                else
+                                {
+                                    resetPos(t);
+                                }
                             }
                             else
                             {
@@ -468,34 +475,43 @@ namespace WarRoomDemo
                         var queryContent = warRoomPkt.data.GetProperty("queryContent").GetString();
                         if (queryContent == "system")
                         {
-                            var reply = new QueryReply();
+                            var reply = new QuerySystemReply();
                             reply.data.replyTo = warRoomPkt.uid;
                             reply.data.vehicles = myState.vehicles;
                             await SendInJson(reply);
                             Console.WriteLine("reply query");
-                        }
-
-                        if (!myState.initialized && warRoomPkt.data.TryGetProperty("location", out var json))
-                        {
-                            var loc = json.Deserialize<double[]>();
-                            if (loc != null)
+                            if (!myState.initialized &&
+                                initLat == DGSSetting.DefaultLatitude && initLng == DGSSetting.DefaultLongitude
+                                && warRoomPkt.data.TryGetProperty("location", out var json))
                             {
-                                initLat = loc[0];
-                                initLng = loc[1];
-                                myState.vehicles.ForEach(v => Array.Copy(loc, v.position, 2));
+                                var loc = json.Deserialize<double[]>();
+                                if (loc != null)
+                                {
+                                    double latoff = loc[0] - initLat;
+                                    double lngoff = loc[1] - initLng;
+                                    myState.vehicles.ForEach(v =>
+                                    {
+                                        v.position[0] += latoff;
+                                        v.position[1] += lngoff;
+                                    });
+                                }
                             }
-                        }
-                        ReconResult.reconTargets?.ForEach(t =>
-                        {
-                            var ip = t.initialPosition;
-                            if (ip[0] == 0 && ip[1] == 0)
+                            ReconResult.reconTargets?.ForEach(t =>
                             {
-                                ip[0] = initLat;
-                                ip[1] = initLng;
-                            }
-                            ReconResult.reportRecon = true;
-                        });
-                        myState.initialized = true;
+                                var ip = t.initialPosition;
+                                if (ip[0] == 0 && ip[1] == 0)
+                                {
+                                    ip[0] = initLat;
+                                    ip[1] = initLng;
+                                }
+                                ReconResult.reportRecon = true;
+                            });
+                            myState.initialized = true;
+                        }
+                        else if (queryContent == "fence")
+                        {
+                            //
+                        }
                     }
                     else if (warRoomPkt.type == "command")
                     {
@@ -569,8 +585,8 @@ namespace WarRoomDemo
                 var vehicles = myState.vehicles.Where(v => v.swarmUid == s);
                 myState.swarmMissions[i].Clear();
                 myState.swarmCurrentMission.Add(0);
-                sguided[i] = vehicles.Sum(v => v.payloads.Where(p => p.type == "guidedBomb").Sum(p => p.amount));
-                sgravity[i] = vehicles.Sum(v => v.payloads.Where(p => p.type == "gravityBomb").Sum(p => p.amount));
+                sguided[i] = vehicles.Sum(v => v.payloads.Where(p => p.type.ToLower() == "guidedbomb").Sum(p => p.amount));
+                sgravity[i] = vehicles.Sum(v => v.payloads.Where(p => p.type.ToLower() == "gravitybomb").Sum(p => p.amount));
 
             }
             int myguided = sguided.Sum(), mygravity = sgravity.Sum();
@@ -655,43 +671,63 @@ namespace WarRoomDemo
         public static bool requestDGSStatus;
         public static bool requestReconResults;
 
-        static void AddSwarm(MyState myState)
+        static void AddSwarm(MyState myState, int size, string[] vtypes, string[] ptypes, int[] pamounts, double latoff, double lngoff)
         {
+            double lat = initLat + latoff * swarmSN;
             string swarmUid = $"{DGSSetting.SystemUid}-swarm-{++swarmSN:00}";
             myState.swarms.Add(swarmUid);
+            string vtype = vtypes[0], ptype = ptypes[0];
+            int pamount = pamounts[0];
 
             var leader = new Vehicle
             {
                 vehicleUid = $"{DGSSetting.SystemUid}-drone-{++vehicleSN:00}",
                 swarmUid = swarmUid,
-                position = new double[] { initLat, initLng + vehicleSN * 0.0001, 30 },
+                type = vtype,
+                position = new double[] { lat, initLng + vehicleSN * lngoff, 30 },
                 isLeader = true,
                 payloads = new List<Vehicle.Payload>
                 {
                     new Vehicle.Payload
                     {
-                        type = "guidedBomb",
-                        amount = 1,
+                        type = ptype,
+                        amount = pamount,
                     }
                 },
             };
-            var wingman = new Vehicle
-            {
-                vehicleUid = $"{DGSSetting.SystemUid}-drone-{++vehicleSN:00}",
-                swarmUid = swarmUid,
-                position = new double[] { initLat + 0.0005, initLng + vehicleSN * 0.001, 35 },
-                payloads = new List<Vehicle.Payload> { new Vehicle.Payload { amount = 1 } }
-            };
             myState.vehicles.Add(leader);
-            myState.vehicles.Add(wingman);
-            myState.swarmVehicles.Add(new List<Vehicle> { leader, wingman });
+
+            var swarmvehicles = new List<Vehicle> { leader };
+
+            for (int i = 0; ++i < size; )
+            {
+                if (i < vtypes.Length) vtype = vtypes[i];
+                if (i < ptypes.Length) ptype = ptypes[i];
+                if (i < pamounts.Length) pamount = pamounts[i];
+                var wingman = new Vehicle
+                {
+                    vehicleUid = $"{DGSSetting.SystemUid}-drone-{++vehicleSN:00}",
+                    type = vtype,
+                    swarmUid = swarmUid,
+                    position = new double[] { lat, initLng + vehicleSN * lngoff, 35 },
+                    payloads = new List<Vehicle.Payload> { new Vehicle.Payload { type = ptype, amount = pamount } }
+                };
+                myState.vehicles.Add(wingman);
+                swarmvehicles.Add(wingman);
+            }
+
+            myState.swarmVehicles.Add(swarmvehicles);
             myState.swarmMissions.Add(new List<SwarmMission>());
         }
 
         static void Main(string[] args)
         {
-            int argptr = 0, arglen = args.Length, swarms = 1;
+            int argptr = 0, arglen = args.Length, swarms = 1, swarmsize = 2;
+            double latoff = 0.001, lngoff = 0.0005;
             string uri;
+            string[] vehicletypes = { "copter" }, payloadtypes = { "guidedBomb", "gravityBomb" };
+            List<string> entityTypes = new();
+            int[] payloadamounts = { 1 };
             if (arglen > 0)
             {
                 uri = args[0];
@@ -714,8 +750,47 @@ namespace WarRoomDemo
                     string arg = args[argptr];
                     switch (opt.ToLower())
                     {
+                        case "-dronetype":
+                        case "-dronetypes":
+                        case "-vtype":
+                        case "-vtypes":
+                        case "-vehicletype":
+                        case "-vehicletypes":
+                            vehicletypes = arg.ToLower().Split(',');
+                            break;
+                        case "-ptype":
+                        case "-ptypes":
+                        case "-payloadtype":
+                        case "-payloadtypes":
+                            payloadtypes = arg.ToLower().Split(',');
+                            break;
+                        case "-pamount":
+                        case "-pamounts":
+                        case "-payloadamount":
+                        case "-payloadamounts":
+                            try
+                            {
+                                var amounts = arg.ToLower().Split(',').Select(
+                                    s => int.TryParse(s, out int a) ? a : 0);
+                                payloadamounts = amounts.ToArray();
+                            }
+                            catch { }
+                            break;
                         case "-swarms":
                             int.TryParse(arg, out swarms);
+                            break;
+                        case "-swarmsize":
+                            int.TryParse(arg, out swarmsize);
+                            break;
+                        case "-latoff":
+                        case "-latoffset":
+                        case "-latittudeoffset":
+                            double.TryParse(arg, out latoff);
+                            break;
+                        case "-lngoff":
+                        case "-lngoffset":
+                        case "-longitudeoffset":
+                            double.TryParse(arg, out lngoff);
                             break;
                         case "-loc":
                         case "-location":
@@ -765,14 +840,37 @@ namespace WarRoomDemo
                                 Console.WriteLine("Invalid recon parameter: expected steps,hidesteps,initlat,initlng,initalt,steplat,steplng,stepalt got: " + arg);
                             }
                             break;
+                        case "-entitytype":
+                        case "-targettype":
+                        case "-ttype":
+                        case "-etype":
+                        case "-entitytypes":
+                        case "-targettypes":
+                        case "-ttypes":
+                        case "-etypes":
+                            entityTypes = arg.Split(',').ToList();
+                            break;
+                        default:
+                            --argptr;
+                            break;
                     }
+                }
+            }
+
+            if (ReconResult.reconTargets != null)
+            {
+                string etype = "boat";
+                for (int i = 0; i < ReconResult.reconTargets.Count; i++)
+                {
+                    if (i < entityTypes.Count) etype = entityTypes[i];
+                    ReconResult.reconTargets[i].entityType = etype;
                 }
             }
 
             var myState = new MyState();
             while (swarms-- > 0)
             {
-                AddSwarm(myState);
+                AddSwarm(myState, swarmsize, vehicletypes, payloadtypes, payloadamounts, latoff, lngoff);
             }
 
             websocket = new ClientWebSocket();
